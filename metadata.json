@@ -1,0 +1,6 @@
+{
+  "name": "WoollyAuth",
+  "description": "A sheep-themed sign-in and sign-up application using Firebase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
