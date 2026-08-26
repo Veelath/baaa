@@ -27,7 +27,10 @@ fun HomeScreen(
     onSignOut: () -> Unit
 ) {
     val authState by viewModel.authState.collectAsStateWithLifecycle()
-    val email = if (authState is AuthState.Success) (authState as AuthState.Success).email else ""
+    val successState = authState as? AuthState.Success
+    val email = successState?.email ?: ""
+    val displayName = successState?.profile?.displayName ?: ""
+    val uid = successState?.uid ?: ""
 
     Scaffold(
         topBar = {

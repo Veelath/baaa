@@ -15,7 +15,7 @@ android {
   compileSdk = 34
 
   defaultConfig {
-    applicationId = "com.aistudio.woollyauth.abcde"
+    applicationId = "com.herdgate"
     minSdk = 24
     targetSdk = 34
     versionCode = 1
@@ -100,7 +100,7 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   // implementation(libs.coil.compose)
   implementation(libs.converter.moshi)
-  // implementation(libs.firebase.firestore)
+  implementation(libs.firebase.firestore)
 
   // Dependencies for Firebase Auth and Google Sign-In via Credential Manager:
   implementation(libs.firebase.auth)
