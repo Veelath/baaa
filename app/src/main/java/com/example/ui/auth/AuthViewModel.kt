@@ -3,6 +3,7 @@ package com.example.ui.auth
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.UserProfile
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.FirebaseAuthInvalidUserException
@@ -54,95 +55,123 @@ class AuthViewModel : ViewModel() {
                 val profile = fetchUserProfile(user.uid, user.email ?: "")
                 _authState.value = AuthState.Success(user.uid, user.email ?: "", profile)
             }
-        } else if (auth == null) {
-            _authState.value = AuthState.Error(
-                "Firebase is not configured. Please add your google-services.json to the app/ directory."
-            )
         }
     }
 
-    private fun validateInputs(email: String, pass: String): String? {
+    fun signUp(
+        firstName: String,
+        lastName: String,
+        email: String,
+        pass: String,
+        confirmPass: String
+    ) {
+        if (auth == null) {
+            _authState.value = AuthState.Error(
+                "Firebase is not configured. Please place google-services.json in the app/ directory."
+            )
+            return
+        }
+
+        val trimmedFirst = firstName.trim()
+        val trimmedLast = lastName.trim()
         val trimmedEmail = email.trim()
+
+        if (trimmedFirst.isEmpty()) {
+            _authState.value = AuthState.Error("Please enter your first name.")
+            return
+        }
+        if (trimmedLast.isEmpty()) {
+            _authState.value = AuthState.Error("Please enter your last name.")
+            return
+        }
         if (trimmedEmail.isEmpty()) {
-            return "Shepherd ID (Email) cannot be empty."
+            _authState.value = AuthState.Error("Please enter your email address.")
+            return
         }
         val emailPattern = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$".toRegex()
         if (!trimmedEmail.matches(emailPattern)) {
-            return "Please enter a valid email address."
+            _authState.value = AuthState.Error("Please enter a valid email address.")
+            return
         }
         if (pass.isEmpty()) {
-            return "Gate Key (Password) cannot be empty."
+            _authState.value = AuthState.Error("Please enter a password.")
+            return
         }
         if (pass.length < 6) {
-            return "Password must be at least 6 characters long."
-        }
-        return null
-    }
-
-    fun signUp(email: String, pass: String) {
-        if (auth == null) {
-            _authState.value = AuthState.Error("Firebase is not configured. Please add your google-services.json.")
+            _authState.value = AuthState.Error("Password must be at least 6 characters.")
             return
         }
-
-        val validationError = validateInputs(email, pass)
-        if (validationError != null) {
-            _authState.value = AuthState.Error(validationError)
+        if (pass != confirmPass) {
+            _authState.value = AuthState.Error("Passwords do not match.")
             return
         }
-
-        val trimmedEmail = email.trim()
 
         viewModelScope.launch {
             _authState.value = AuthState.Loading
             try {
-                // 1. Create user in Firebase Auth
+                // 1. Create account in Firebase Auth
                 val result = auth.createUserWithEmailAndPassword(trimmedEmail, pass).await()
                 val user = result.user
                 if (user == null) {
-                    _authState.value = AuthState.Error("Sign up failed: User creation returned null.")
+                    _authState.value = AuthState.Error("Sign up failed. Please try again.")
                     return@launch
                 }
 
                 val currentTime = System.currentTimeMillis()
+                val fullName = "$trimmedFirst $trimmedLast".trim()
                 val userProfile = UserProfile(
                     uid = user.uid,
+                    firstName = trimmedFirst,
+                    lastName = trimmedLast,
                     email = trimmedEmail,
-                    displayName = trimmedEmail.substringBefore("@"),
+                    displayName = fullName,
                     createdAt = currentTime,
                     lastLoginAt = currentTime
                 )
 
-                // 2. Persist user document in Firestore 'users' collection
+                // 2. Persist profile document in Firestore
                 try {
                     firestore?.collection("users")
                         ?.document(user.uid)
                         ?.set(userProfile.toMap())
                         ?.await()
                 } catch (fe: Exception) {
-                    // Log or handle Firestore write error gracefully (e.g. offline/rules)
+                    // Firestore sync error (e.g. offline / rules)
                 }
 
                 _authState.value = AuthState.Success(user.uid, trimmedEmail, userProfile)
             } catch (e: FirebaseAuthWeakPasswordException) {
-                _authState.value = AuthState.Error("The password is too weak. Please use at least 6 characters.")
+                _authState.value = AuthState.Error("Password is too weak. Please use at least 6 characters.")
             } catch (e: FirebaseAuthUserCollisionException) {
-                _authState.value = AuthState.Error("An account with this email already exists.")
+                _authState.value = AuthState.Error("An account with this email address already exists.")
             } catch (e: Exception) {
-                _authState.value = AuthState.Error(e.localizedMessage ?: "Sign up failed.")
+                val raw = e.localizedMessage ?: "Sign up failed."
+                if (raw.contains("CONFIGURATION_NOT_FOUND", ignoreCase = true)) {
+                    _authState.value = AuthState.Error(
+                        "Email/Password sign-in is not enabled in Firebase Console. Go to Authentication > Sign-in method to enable it."
+                    )
+                } else {
+                    _authState.value = AuthState.Error(raw)
+                }
             }
         }
     }
 
     fun signIn(email: String, pass: String) {
         if (auth == null) {
-            _authState.value = AuthState.Error("Firebase is not configured. Please add your google-services.json.")
+            _authState.value = AuthState.Error(
+                "Firebase is not configured. Please place google-services.json in the app/ directory."
+            )
             return
         }
 
         val trimmedEmail = email.trim()
-        if (trimmedEmail.isEmpty() || pass.isEmpty()) {
-            _authState.value = AuthState.Error("Email and password cannot be empty.")
+        if (trimmedEmail.isEmpty()) {
+            _authState.value = AuthState.Error("Please enter your email address.")
+            return
+        }
+        if (pass.isEmpty()) {
+            _authState.value = AuthState.Error("Please enter your password.")
             return
         }
 
@@ -153,20 +182,27 @@ class AuthViewModel : ViewModel() {
                 val result = auth.signInWithEmailAndPassword(trimmedEmail, pass).await()
                 val user = result.user
                 if (user == null) {
-                    _authState.value = AuthState.Error("Sign in failed: User is null.")
+                    _authState.value = AuthState.Error("Sign in failed.")
                     return@launch
                 }
 
-                // 2. Validate/Fetch/Update user profile from Firestore
+                // 2. Retrieve or update profile from Firestore
                 val profile = fetchOrCreateUserProfile(user.uid, trimmedEmail)
 
                 _authState.value = AuthState.Success(user.uid, trimmedEmail, profile)
             } catch (e: FirebaseAuthInvalidUserException) {
                 _authState.value = AuthState.Error("No account found with this email.")
             } catch (e: FirebaseAuthInvalidCredentialsException) {
-                _authState.value = AuthState.Error("Incorrect password or malformed email.")
+                _authState.value = AuthState.Error("Incorrect password or email.")
             } catch (e: Exception) {
-                _authState.value = AuthState.Error(e.localizedMessage ?: "Sign in failed.")
+                val raw = e.localizedMessage ?: "Sign in failed."
+                if (raw.contains("CONFIGURATION_NOT_FOUND", ignoreCase = true)) {
+                    _authState.value = AuthState.Error(
+                        "Email/Password sign-in is not enabled in Firebase Console. Go to Authentication > Sign-in method to enable it."
+                    )
+                } else {
+                    _authState.value = AuthState.Error(raw)
+                }
             }
         }
     }
@@ -191,13 +227,11 @@ class AuthViewModel : ViewModel() {
             val doc = docRef?.get()?.await()
 
             if (doc != null && doc.exists()) {
-                // Update lastLoginAt in Firestore
                 docRef.set(mapOf("lastLoginAt" to currentTime), SetOptions.merge()).await()
                 val updatedData = doc.data?.toMutableMap() ?: mutableMapOf()
                 updatedData["lastLoginAt"] = currentTime
                 UserProfile.fromMap(updatedData)
             } else {
-                // Create user profile if it doesn't exist yet in Firestore
                 val newProfile = UserProfile(
                     uid = uid,
                     email = email,
@@ -209,7 +243,12 @@ class AuthViewModel : ViewModel() {
                 newProfile
             }
         } catch (e: Exception) {
-            UserProfile(uid = uid, email = email, displayName = email.substringBefore("@"), lastLoginAt = currentTime)
+            UserProfile(
+                uid = uid,
+                email = email,
+                displayName = email.substringBefore("@"),
+                lastLoginAt = currentTime
+            )
         }
     }
 
